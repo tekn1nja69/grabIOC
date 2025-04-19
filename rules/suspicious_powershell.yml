@@ -1,0 +1,14 @@
+title: Suspicious Powershell Execution
+id: 01e4e2f3-aacc-4f6b-81cd-962ae15311ff
+description: Detects use of suspicious PowerShell commands
+status: experimental
+logsource:
+  category: process_creation
+detection:
+  selection:
+    CommandLine|contains:
+      - "powershell"
+      - "-enc"
+      - "IEX"
+  condition: selection
+level: high
