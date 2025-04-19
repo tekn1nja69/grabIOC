@@ -1,0 +1,12 @@
+argparse
+requests
+python-dotenv
+colorama
+psutil
+pyshark
+yara-python
+pymisp
+OTXv2
+pyyaml
+pySigma==0.11.21
+pySigma-backend-splunk==1.1.3

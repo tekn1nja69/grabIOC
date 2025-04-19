@@ -1,0 +1,51 @@
+# YAML config for grabIOC process hunting module
+process_rules:
+  # Regex-based patterns for suspicious process names
+  name_patterns:
+    # Red Team / APT / Commodity tools
+    - "(?i)mimikatz"
+    - "(?i)cobaltstrike"
+    - "(?i)rclone"
+    - "(?i)procdump"
+    - "(?i)mshta"
+    - "(?i)powershell"
+    - "(?i)certutil"
+    - "(?i)curl"
+    - "(?i)wget"
+    - "(?i)sqlmap"
+    - "(?i)netcat"
+    - "(?i)nc.exe"
+    - "(?i)nmap"
+    - "(?i)teamviewer"
+    - "(?i)anydesk"
+    - "(?i)tor.exe"
+    - "(?i)ngrok"
+    - "(?i)meterpreter"
+    - "(?i)cmd.exe"          # Optional - false positives possible
+    - "(?i)powershell.exe"   # Optional - tune based on environment
+
+  # Patterns to match on binary paths — usually attacker-dropped binaries
+  path_patterns:
+    - "(?i)\\\\appdata\\\\local\\\\temp\\\\"
+    - "(?i)\\\\users\\\\.*\\\\appdata\\\\roaming\\\\"
+    - "(?i)\\\\programdata\\\\"
+    - "(?i)\\\\windows\\\\temp\\\\"
+    - "(?i)\\\\inetpub\\\\wwwroot\\\\"
+    - "(?i)\\\\recycle.bin\\\\"
+    - "(?i)\\\\systemvolumeinformation\\\\"
+    - "(?i)\\\\users\\\\public\\\\"
+
+  # Only allow these ports for listening services (adjust for your infra)
+  trusted_ports:
+    - 22    # SSH
+    - 53    # DNS
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 3389  # RDP (optional)
+    - 445   # SMB (optional)
+    - 25    # SMTP (email servers)
+    - 3306  # MySQL
+    - 5432  # PostgreSQL
+
+  # VirusTotal API key (optional for binary hash checks)
+  vt_api_key: "YOUR_VIRUSTOTAL_API_KEY_HERE"
