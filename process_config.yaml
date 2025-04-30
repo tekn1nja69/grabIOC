@@ -2,7 +2,7 @@
 process_rules:
   # Regex-based patterns for suspicious process names
   name_patterns:
-    # Red Team / APT / Commodity tools
+    # Common offensive tools and post-exploitation frameworks
     - "(?i)mimikatz"
     - "(?i)cobaltstrike"
     - "(?i)rclone"
@@ -21,31 +21,46 @@ process_rules:
     - "(?i)tor.exe"
     - "(?i)ngrok"
     - "(?i)meterpreter"
-    - "(?i)cmd.exe"          # Optional - false positives possible
-    - "(?i)powershell.exe"   # Optional - tune based on environment
+    - "(?i)cmd.exe"
+    - "(?i)powershell.exe"
+    - "(?i)bloodhound"
+    - "(?i)sharp.*"          # SharpHound, SharpRDP, etc.
+    - "(?i)seatbelt"
+    - "(?i)linpeas"
+    - "(?i)winpeas"
+    - "(?i)7z.exe"           # Potential exfiltration tool
+    - "(?i)python.exe"       # Scripting engine, use with care
+    - "(?i)wscript.exe"
+    - "(?i)cscript.exe"
 
-  # Patterns to match on binary paths — usually attacker-dropped binaries
+  # Regex patterns for suspicious binary paths
   path_patterns:
-    - "(?i)\\\\appdata\\\\local\\\\temp\\\\"
-    - "(?i)\\\\users\\\\.*\\\\appdata\\\\roaming\\\\"
-    - "(?i)\\\\programdata\\\\"
-    - "(?i)\\\\windows\\\\temp\\\\"
-    - "(?i)\\\\inetpub\\\\wwwroot\\\\"
-    - "(?i)\\\\recycle.bin\\\\"
-    - "(?i)\\\\systemvolumeinformation\\\\"
-    - "(?i)\\\\users\\\\public\\\\"
+    - "(?i)\\appdata\\local\\temp\\"
+    - "(?i)\\users\\.*\\appdata\\roaming\\"
+    - "(?i)\\programdata\\"
+    - "(?i)\\windows\\temp\\"
+    - "(?i)\\inetpub\\wwwroot\\"
+    - "(?i)\\recycle.bin\\"
+    - "(?i)\\systemvolumeinformation\\"
+    - "(?i)\\users\\public\\"
+    - "(?i)\\windows\\debug\\"
+    - "(?i)\\windows\\tasks\\"
+    - "(?i)\\temp\\"
+    - "(?i)\\windows\\system32\\spool\\drivers\\color\\"
 
-  # Only allow these ports for listening services (adjust for your infra)
+  # Only allow these ports for listening services (adjust as needed)
   trusted_ports:
-    - 22    # SSH
-    - 53    # DNS
-    - 80    # HTTP
-    - 443   # HTTPS
-    - 3389  # RDP (optional)
-    - 445   # SMB (optional)
-    - 25    # SMTP (email servers)
-    - 3306  # MySQL
-    - 5432  # PostgreSQL
+    - 22     # SSH
+    - 53     # DNS
+    - 80     # HTTP
+    - 443    # HTTPS
+    - 3389   # RDP
+    - 445    # SMB
+    - 25     # SMTP
+    - 3306   # MySQL
+    - 5432   # PostgreSQL
+    - 5985   # WinRM (optional)
+    - 139    # NetBIOS (legacy systems)
 
-  # VirusTotal API key (optional for binary hash checks)
+  # Optional VirusTotal API key
   vt_api_key: "YOUR_VIRUSTOTAL_API_KEY_HERE"
