@@ -470,6 +470,8 @@ def extract_iocs_from_file(file_path: str) -> Dict[str, List[str]]:
         "MD5": r'\b[a-fA-F0-9]{32}\b',
         "SHA1": r'\b[a-fA-F0-9]{40}\b',
         "SHA256": r'\b[a-fA-F0-9]{64}\b',
+        "Domain": r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b',
+        "Windows Path": r'\b[a-zA-Z]:\\\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*\b',
     }
     extracted = {}
 
