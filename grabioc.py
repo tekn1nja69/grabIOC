@@ -668,7 +668,7 @@ def send_alert(message: str, mode: str = "webhook", webhook_url: str = None):
         payload = {
             "content": message,
             "username": "grabIOC Alert",
-            "avatar_url": "https://i.imgur.com/4M34hi2.png"
+            "avatar_url": "https://i.imgur.com/UxX3xOM.png"
         }
         try:
             response = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
