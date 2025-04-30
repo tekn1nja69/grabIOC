@@ -7,7 +7,7 @@
 
 ## 🚀 Overview
 
-`grabIOC` is a lightweight, CLI-based tool built for security analysts, DFIR professionals, and threat hunters. It extracts, enriches, and correlates IOCs (Indicators of Compromise) from files, PCAPs, URLs, IPs, and live system processes — all from a terminal interface.
+`grabIOC` is a lightweight, CLI-based tool built for security analysts, DFIR professionals, and threat hunters. It extracts, enriches, and correlates IOCs (Indicators of Compromise) from files, PCAPs, URLs, IPs, and live system processes.
 
 ---
 
