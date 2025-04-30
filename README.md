@@ -1,6 +1,6 @@
 # grabIOC
 
-> A Lightweight Threat Intel & IOC Extraction Toolkit 🕵️‍  
+> A Lightweight Threat Intel & IOC Extraction Toolkit 🕵️‍ 🧪  
 > Developed by [Ali J](https://github.com/tekn1nja69)
 
 ---
@@ -36,6 +36,10 @@ pip install -r requirements.txt
 Then set up your `.env` file:
 
 ```bash
+# For Windows
+copy .env.proto .env
+
+# For macOS/Linux
 cp .env.proto .env
 ```
 
@@ -43,7 +47,7 @@ Add your API keys inside `.env`.
 
 ---
 
-## 🔐 .env Format
+## 🔐 .env Config Format (.env.proto)
 
 ```env
 ABUSEIPDB_KEY=your_key_here
@@ -75,17 +79,17 @@ python grabioc.py --url http://malicious.site
 python grabioc.py --ip 8.8.8.8
 ```
 
-### Scan system directories
+### Scan system directories for IOCs
 ```bash
 python grabioc.py --scan ~/Downloads /tmp --export result.json
 ```
 
-### Scan running processes (YAML-based rules)
+### Scan running processes (using custom YAML-based rules)
 ```bash
 python grabioc.py --scan-procs --process-config process_config.yaml
 ```
 
-### Use YARA or Sigma rules
+### Use YARA or Sigma rules during file analysis:
 ```bash
 python grabioc.py --file suspicious.log --yara rules/
 python grabioc.py --file log.txt --sigma rules/
@@ -108,4 +112,5 @@ python grabioc.py --file file.txt --verbose
 This project is licensed under the [MIT License](LICENSE)
 
 ---------------------------------------------------------------------
-For educational and research purposes only. Use responsibly.
+This tool is intended for educational and research purposes only. 
+Use responsibly and ensure compliance with your Government and/or Organization's policies and applicable laws.
