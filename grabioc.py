@@ -24,6 +24,35 @@ from sigma.backends.splunk import SplunkBackend
 
 init(autoreset=True)
 
+def validate_config(warn_only: bool = True) -> bool:
+    """Validate essential configuration before execution"""
+    required_configs = [
+        ("VIRUSTOTAL_KEY", "VirusTotal API"),
+        ("ABUSEIPDB_KEY", "AbuseIPDB API"),
+        ("MISP_URL", "MISP Instance URL"),
+        ("MISP_KEY", "MISP API Key")
+    ]
+
+    missing = []
+    for var, name in required_configs:
+        if not os.getenv(var):
+            missing.append(name)
+
+    if missing:
+        print(f"
+{Fore.RED}[!] Missing critical configurations:{Style.RESET_ALL}")
+        for name in missing:
+            print(f"  - {name}")
+        print(f"{Fore.YELLOW}Some features may not work properly without them.{Style.RESET_ALL}")
+
+        if not warn_only:
+            print(f"
+{Fore.RED}Exiting due to incomplete configuration.{Style.RESET_ALL}")
+            return False
+
+    return True
+
+
 
 REQUIRED_LIBS = ['pymisp', 'OTXv2', 'pyshark', 'psutil', 'yara-python', 'pyyaml', 'sigma']
 
@@ -193,63 +222,80 @@ def scan_system(paths: List[str], yara_rules: Optional[yara.Rules] = None, args=
 #======Threat Hunting Funtionality=============
 class ThreatHunter:
     def __init__(self):
-        self.misp = self._init_misp()
+        self.sources_available = []
+
+        try:
+            self.misp = self._init_misp()
+            if self.misp:
+                log_event("MISP initialized successfully", "INFO")
+                self.sources_available.append("MISP")
+            else:
+                log_event("MISP not configured", "WARNING")
+        except Exception as e:
+            log_event(f"MISP init exception: {str(e)}", "ERROR")
+            self.misp = None
+
         try:
             self.otx = OTXv2(OTX_KEY) if OTX_KEY else None
+            if self.otx:
+                log_event("OTX initialized successfully", "INFO")
+                self.sources_available.append("OTX")
+            else:
+                log_event("OTX key missing or not initialized", "WARNING")
         except Exception as e:
             log_event(f"OTX init failed: {str(e)}", "ERROR")
             self.otx = None
 
     def _init_misp(self):
-        try:
-            if MISP_URL and MISP_KEY:
+        if MISP_URL and MISP_KEY:
+            try:
                 ssl_verify = os.getenv("MISP_SSL_VERIFY", "True").lower() == "true"
                 return ExpandedPyMISP(MISP_URL, MISP_KEY, ssl=ssl_verify)
-            return None
-        except Exception as e:
-            log_event(f"MISP init failed: {str(e)}", "ERROR")
-            return None
+            except Exception as e:
+                log_event(f"MISP init failed: {str(e)}", "ERROR")
+        return None
 
-    def get_ioc_context(self, ioc: str, ioc_type: str) -> Dict:
+    def get_ioc_context(self, ioc: str, ioc_type: str) -> Dict[str, List]:
         context = {"misp_events": [], "otx_pulses": []}
-        
+        ioc_type = ioc_type.lower()
+
         if self.misp:
             try:
-                # Rate Limit for MISP
                 GLOBAL_RATE_LIMITER.wait()
                 result = self.misp.search("attributes", value=ioc)
                 context["misp_events"] = result.get("response", [])
+                log_event(f"MISP returned {len(context['misp_events'])} events for IOC {ioc}", "INFO")
             except Exception as e:
                 log_event(f"MISP query failed: {str(e)}", "ERROR")
-        
+
         if self.otx:
             try:
-                # Rate Limit for OTX
                 GLOBAL_RATE_LIMITER.wait()
-                context["otx_pulses"] = self.otx.get_indicator_details_full(
-                    ioc_type, ioc
-                ).get("pulse_info", {}).get("pulses", [])
+                otx_data = self.otx.get_indicator_details_full(ioc_type, ioc)
+                context["otx_pulses"] = otx_data.get("pulse_info", {}).get("pulses", [])
+                log_event(f"OTX returned {len(context['otx_pulses'])} pulses for IOC {ioc}", "INFO")
             except Exception as e:
                 log_event(f"OTX query failed: {str(e)}", "ERROR")
-        
+
         return context
 
-    def generate_correlation_report(self, context: dict):
-        # Original report generation preserved
+    def generate_correlation_report(self, context: dict, limit: int = 3) -> str:
         report = []
         if context["misp_events"]:
             report.append(f"{Fore.CYAN}\n[MISP Threat Intelligence]{Style.RESET_ALL}")
-            for event in context["misp_events"][:3]:
-                info = event["Event"]["info"][:50] + "..." if len(event["Event"]["info"]) > 50 else event["Event"]["info"]
+            for event in context["misp_events"][:limit]:
+                info = event["Event"].get("info", "No description")
+                if len(info) > 50:
+                    info = info[:50] + "..."
                 report.append(f"- {info} (ID: {event['Event']['id']})")
-        
+
         if context["otx_pulses"]:
             report.append(f"{Fore.CYAN}\n[AlienVault OTX Findings]{Style.RESET_ALL}")
-            for pulse in context["otx_pulses"][:3]:
-                report.append(f"- {pulse['name']}")
+            for pulse in context["otx_pulses"][:limit]:
+                report.append(f"- {pulse.get('name', 'Unnamed Pulse')}")
                 if pulse.get("tags"):
                     report.append(f"  Tags: {', '.join(pulse['tags'])}")
-        
+
         return "\n".join(report) if report else "No Threat Intel Found"
 
 def log_event(message: str, level: str = "INFO"):
@@ -280,68 +326,95 @@ def load_process_config(config_path: str = "process_config.yaml") -> dict:
 
 def check_suspicious_processes(args=None) -> List[dict]:
     """
-    Advanced process analysis with configurable rules:
+    Enhanced process analysis with:
     - name_patterns (regex list)
     - path_patterns (regex list)
     - trusted_ports (int list)
-    - vt_api_key (str)
+    - cmdline analysis
+    - parent process tracing
+    - VT hash lookup (optional)
     """
-    # Load rules (default/ from --process-config)
     config_path = getattr(args, "process_config", None) or "process_config.yaml"
     rules = load_process_config(config_path).get("process_rules", {})
 
     suspicious = []
     seen_pids = set()
 
-    for proc in psutil.process_iter(["pid", "name", "exe", "cmdline", "connections"]):
+    for proc in psutil.process_iter(["pid", "name", "exe", "ppid", "cmdline", "connections"]):
         try:
+        if proc.pid < 0 or proc.pid in seen_pids:
+            continue
+        if not proc.info.get("name") or not isinstance(proc.info["name"], str):
+            continue
             if proc.pid in seen_pids:
                 continue
             seen_pids.add(proc.pid)
             info = proc.info
-            verdict = {"process": info, "reasons": [], "vt_result": None}
+            verdict = {"process": info, "reasons": [], "vt_result": None, "score": 0}
 
-            # — Name checks
+            # === Name checks
             for pat in rules.get("name_patterns", []):
                 if re.search(pat, info.get("name", ""), re.IGNORECASE):
                     verdict["reasons"].append(f"Name matches '{pat}'")
+                    verdict["score"] += 1
 
-            # — Path checks
+            # === Path checks
             exe = info.get("exe") or ""
             for pat in rules.get("path_patterns", []):
                 if exe and re.search(pat, exe, re.IGNORECASE):
                     verdict["reasons"].append(f"Path matches '{pat}'")
+                    verdict["score"] += 1
 
-            # — Port whitelisting
+            # === Port listening checks
             for conn in info.get("connections", []):
                 if conn.status == "LISTEN":
                     port = conn.laddr.port
                     if port not in rules.get("trusted_ports", []):
                         verdict["reasons"].append(f"LISTEN on port {port}")
+                        verdict["score"] += 1
 
-            # — VirusTotal on executable
+            # === Command-line inspection
+            cmdline = " ".join(info.get("cmdline") or [])
+            if re.search(r"(?:-e|Invoke|FromBase64|EncodedCommand|cmd|powershell|certutil)", cmdline, re.IGNORECASE):
+                verdict["reasons"].append("Suspicious command line args")
+                verdict["score"] += 1
+
+            # === Parent process tracing
+            try:
+                parent = psutil.Process(info.get("ppid"))
+                verdict["process"]["parent_name"] = parent.name()
+                if parent.name().lower() in ["notepad.exe", "explorer.exe"]:
+                    verdict["reasons"].append(f"Suspicious parent: {parent.name()}")
+                    verdict["score"] += 1
+            except Exception:
+                pass
+
+            # === VirusTotal lookup
             vt_key = rules.get("vt_api_key")
             if vt_key and exe and os.path.isfile(exe):
                 try:
-                    # hash the file
                     with open(exe, "rb") as f:
-                        h = hashlib.sha256(f.read()).hexdigest()
+                        sha256 = hashlib.sha256(f.read()).hexdigest()
                     GLOBAL_RATE_LIMITER.wait()
                     resp = requests.get(
-                        f"https://www.virustotal.com/api/v3/files/{h}",
+                        f"https://www.virustotal.com/api/v3/files/{sha256}",
                         headers={"x-apikey": vt_key},
                         timeout=10
                     )
                     if resp.status_code == 200:
                         verdict["vt_result"] = resp.json().get("data", {})
+                        stats = verdict["vt_result"].get("attributes", {}).get("last_analysis_stats", {})
+                        if stats.get("malicious", 0) > 0:
+                            verdict["reasons"].append(f"VT flagged: {stats.get('malicious')} engines")
+                            verdict["score"] += 2
                 except Exception as e:
                     log_event(f"VT lookup failed: {e}", "ERROR")
 
-            # — collect if any reason
-            if verdict["reasons"]:
+            # === If scored suspicious
+            if verdict["score"] > 0:
                 suspicious.append(verdict)
 
-        except (psutil.NoSuchProcess, PermissionError):
+        except (psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
             continue
 
     return suspicious
@@ -426,20 +499,20 @@ def extract_iocs_from_file(file_path: str) -> Dict[str, List[str]]:
         log_event(f"Error reading file {file_path}: {str(e)}", "ERROR")
         return {}
 
-def extract_iocs_from_pcap(pcap_file: str):
+def extract_iocs_from_pcap(pcap_file: str) -> Dict[str, List[str]]:
     if not pyshark:
         print(f"{Fore.RED}[-] pyshark or TShark is not available.{Style.RESET_ALL}")
         log_event("pyshark/TShark unavailable for pcap analysis", "ERROR")
-        return
+        return {}
 
     print(f"\n{Fore.CYAN}[+] Processing pcap file: {pcap_file}{Style.RESET_ALL}\n")
     iocs = {"IP": set(), "URL": set(), "Domain": set(), "User-Agent": set()}
 
     try:
         with pyshark.FileCapture(pcap_file, display_filter='tcp') as capture:
-               capture.set_parameter("max_packets", 10000)
+            capture.set_parameter("max_packets", 10000)
             
-               for pkt in capture:
+            for pkt in capture:
                 try:
                     if hasattr(pkt, 'ip'):
                         for field in ['src', 'dst']:
@@ -462,15 +535,15 @@ def extract_iocs_from_pcap(pcap_file: str):
                 except AttributeError:
                     continue
 
-        for key, values in iocs.items():
-            if values:
-                print(f"{Fore.YELLOW}{key} ({len(values)} found):{Style.RESET_ALL}")
-                for v in values:
-                    print(f"  - {v}")
-        log_event(f"Extracted {sum(len(v) for v in iocs.values())} IOCs from {pcap_file}", "INFO")
-        return extracted
+        # Convert sets to lists for consistent return type
+        return {k: list(v) for k, v in iocs.items()}
+
     except FileNotFoundError:
+        log_event(f"PCAP file not found: {pcap_file}", "ERROR")
+    except Exception as e:
         log_event(f"PCAP processing failed: {str(e)}", "ERROR")
+    
+    return {}
 
 def compile_yara_rules(yara_dir: str) -> Optional[yara.Rules]:
     """Compile YARA rules from a directory with validation"""
@@ -575,25 +648,59 @@ def apply_sigma_rules(log_lines: List[str], sigma_rules: List[SigmaRule]):
     
     return matches
 
-def send_webhook_alert(message: str, webhook_url: str):
-    try:
-        headers = {'Content-Type': 'application/json'}
+def send_alert(message: str, mode: str = "webhook", webhook_url: str = None):
+    """
+    Send alerts to Discord-style webhook or Telegram Bot.
+    Prioritize CLI-supplied webhook_url, then fall back to .env for both modes.
+    """
+    if mode == "webhook":
+        url = webhook_url or os.getenv("WEBHOOK_URL")
+        if not url:
+            print(f"{Fore.YELLOW}[!] Webhook URL not provided or missing from .env{Style.RESET_ALL}")
+            return
+
+        if not url.startswith("http"):
+            print(f"{Fore.RED}[-] Invalid webhook URL{Style.RESET_ALL}")
+            return
+
         payload = {
             "content": message,
             "username": "grabIOC Alert",
             "avatar_url": "https://i.imgur.com/4M34hi2.png"
         }
-        response = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
-        
-        if response.status_code in [200, 204]:
-            print(f"{Fore.GREEN}[+] Webhook alert sent successfully{Style.RESET_ALL}")
-        else:
-            print(f"{Fore.YELLOW}[!] Webhook error: {response.status_code}{Style.RESET_ALL}")
-            log_event(f"Webhook response: {response.text}", "WARNING")
-            
-    except Exception as e:
-        print(f"{Fore.RED}[-] Webhook failed: {str(e)}{Style.RESET_ALL}")
-        log_event(f"Webhook error: {str(e)}", "ERROR")
+        try:
+            response = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+            if response.status_code in [200, 204]:
+                print(f"{Fore.GREEN}[+] Webhook alert sent successfully{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}[!] Webhook error: {response.status_code}{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}[-] Webhook failed: {str(e)}{Style.RESET_ALL}")
+
+    elif mode == "telegram":
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+        if not bot_token or not chat_id:
+            print(f"{Fore.YELLOW}[!] Telegram Bot Token or Chat ID missing from .env{Style.RESET_ALL}")
+            return
+
+        tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message
+        }
+        try:
+            response = requests.post(tg_url, json=payload, timeout=10)
+            if response.status_code == 200:
+                print(f"{Fore.GREEN}[+] Telegram alert sent successfully{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}[!] Telegram alert error: {response.status_code} - {response.text}{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}[-] Telegram alert failed: {str(e)}{Style.RESET_ALL}")
+
+    else:
+        print(f"{Fore.RED}[-] Unsupported alert mode: {mode}{Style.RESET_ALL}")
 
 
 def make_api_request(url: str, headers: dict, params: Optional[dict] = None, retries: int = 3):
@@ -710,13 +817,18 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument("--export", help="Export extracted IOCs to a JSON file")
     parser.add_argument("--csv", help="Export extracted IOCs to a CSV file")
-    parser.add_argument("--alert", help="Send webhook alert (e.g., Discord or Slack)")
+    parser.add_argument("-a", "--alert", help="Send alert (Discord/TG)")
+    parser.add_argument("-m", "--mode", choices=["webhook", "telegram"], default="webhook", help="Alert mode")
     parser.add_argument("--yara", help="Directory containing YARA rules")
     parser.add_argument("--export-yara", help="Export YARA match results to JSON file")
     parser.add_argument("--sigma", help="Directory containing Sigma rules")
     parser.add_argument("--process-config", help="Path to YAML file with process_rules")
+    
 
     args = parser.parse_args()
+
+    # Warn-only config validation
+    validate_config(warn_only=True)
     
     if args.list_yara:
         rules = compile_yara_rules(args.yara)
@@ -809,8 +921,11 @@ def main():
                 except Exception as e:
                     print(f"{Fore.RED}[-] Failed to export to CSV: {e}{Style.RESET_ALL}")
 
-            if args.alert:
-                send_webhook_alert(f"grabIOC found {sum(len(v) for v in iocs.values())} IOCs in {args.file}", args.alert)
+            send_alert(
+                  message=f"grabIOC found {sum(len(v) for v in iocs.values())} IOCs in {args.file}",
+                  mode=args.mode,
+                  webhook_url=args.alert
+            )
 
             if args.export:
                 try:
